@@ -191,7 +191,11 @@ export default class GDataGridClass extends Vue {
     }
 
     public getCellValue(row: any, header: any) {
-        return this.globalFormat(header.format ? header.format(row[header.value], row) : row[header.value]);
+        const cv = this.globalFormat(header.format ? header.format(row[header.value], row) : row[header.value]);
+        if (cv === undefined) {
+            return '<UNDEFINED>';
+        }
+        return cv;
     }
 
     public getColValues(fieldName: string) {
@@ -929,6 +933,8 @@ export default class GDataGridClass extends Vue {
         if (!this.filterMenu) {
             this.colValues[fieldName] = this.getColValues(fieldName);
             this.closeFilter();
+        } else {
+            this.tempTexts[fieldName] = this.headers.find((h) => h.value === fieldName)?.text ?? this.tempTexts[fieldName];
         }
     }
     @Watch('tableMenu')
