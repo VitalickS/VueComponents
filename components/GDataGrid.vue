@@ -1,5 +1,5 @@
 <template>
-  <div class="g-datatable">
+  <div class="g-datatable" v-resize="windowResized">
     <div class="g-toolbar">
       <v-row no-gutters align="center">
         <v-col cols="auto">
@@ -28,9 +28,7 @@
               >
                 {{ items.length }}
               </v-chip>
-              <span class="mx-1" v-show="selectedItems.size">
-                Selected
-              </span>
+              <span class="mx-1" v-show="selectedItems.size"> Selected </span>
               <v-chip
                 x-small
                 title="Selected items"
@@ -44,16 +42,22 @@
                 color="primary"
                 v-show="selectedItems.size"
                 @click="clearSelection"
+                title="Clear selection"
               >
-                CLEAR SELECTION
+                CLEAR
               </v-chip>
             </v-row>
           </slot>
         </v-col>
         <v-spacer></v-spacer>
         <v-col cols="auto">
-          <v-menu left :close-on-content-click="false" v-model="tableMenu">
-            <v-card width="400">
+          <v-menu
+            left
+            :close-on-content-click="false"
+            offset-y
+            v-model="tableMenu"
+          >
+            <v-card width="400" class="mt-6">
               <v-card-title>TABLE CONFIGURATOR</v-card-title>
               <v-card-text>
                 <v-tabs v-model="tab">
@@ -72,7 +76,8 @@
                         solo-inverted
                         dense
                         class="mt-1"
-                        v-model="layoutName"
+                        :value="currentLayoutName"
+                        @input="renameLayout($event)"
                       ></v-text-field>
                       <v-card dense class="ma-1 mb-4">
                         <v-row no-gutters>
@@ -95,7 +100,7 @@
                                 align="center"
                                 :class="{
                                   'primary white--text':
-                                    filterMenuModel === item
+                                    filterMenuModel === item,
                                 }"
                               >
                                 <v-col cols="auto">
@@ -113,42 +118,23 @@
                                 <v-col cols="auto" :title="item.value">
                                   <input
                                     v-model="item.text"
-                                    style="color: inherit; border: none; outline: none;"
+                                    style="
+                                      color: inherit;
+                                      border: none;
+                                      outline: none;
+                                    "
                                   />
                                 </v-col>
                                 <v-spacer></v-spacer>
-                                <!-- <v-col cols="auto">
-                                  <v-btn
-                                    small
-                                    icon
-                                    @click.stop="reorder(item.value, -1)"
-                                  >
-                                    <v-icon small>
-                                      mdi-arrow-up
-                                    </v-icon>
-                                  </v-btn>
-                                </v-col>
-                                <v-col cols="auto">
-                                  <v-btn
-                                    small
-                                    icon
-                                    @click.stop="reorder(item.value, +1)"
-                                  >
-                                    <v-icon small>
-                                      mdi-arrow-down
-                                    </v-icon>
-                                  </v-btn>
-                                </v-col> -->
                                 <v-col cols="auto">
                                   <v-btn
                                     @click="showMenu(item, $event)"
                                     small
                                     icon
                                     v-if="filters[item.value]"
-                                    :title="
-                                      `${filterConditions[item.value] ||
-                                        'Contains'} ${filters[item.value]}`
-                                    "
+                                    :title="`${
+                                      filterConditions[item.value] || 'Contains'
+                                    } ${filters[item.value]}`"
                                   >
                                     <v-icon small>mdi-filter</v-icon>
                                   </v-btn>
@@ -162,11 +148,11 @@
                                   >
                                     <v-icon small left>
                                       {{
-                                        item.hidden ? "mdi-eye" : "mdi-eye-off"
+                                        item.hidden ? 'mdi-eye' : 'mdi-eye-off'
                                       }}
                                     </v-icon>
                                     <v-spacer></v-spacer>
-                                    {{ item.hidden ? "Show" : "Hide" }}
+                                    {{ item.hidden ? 'Show' : 'Hide' }}
                                   </v-btn>
                                 </v-col>
                               </v-row>
@@ -174,33 +160,6 @@
                           </v-virtual-scroll>
                         </v-row>
                       </v-card>
-                      <!-- <v-col cols="2" style="padding-left: 10px;">
-                          <v-btn small fab class="mb-1">
-                            <v-icon small>mdi-arrow-collapse-left</v-icon>
-                          </v-btn>
-                          <v-btn small fab class="mb-1">
-                            <v-icon small>mdi-arrow-left</v-icon>
-                          </v-btn>
-                          <v-btn small fab class="mb-1">
-                            <v-icon small>mdi-arrow-right</v-icon>
-                          </v-btn>
-                          <v-btn small fab class="mb-1">
-                            <v-icon small>mdi-arrow-collapse-right</v-icon>
-                          </v-btn>
-                        </v-col>
-                        <v-col cols="5">
-                          <v-card tile>
-                            <v-list height="300" dense style="overflow-y: auto">
-                              <v-list-item
-                                v-for="(col, colIdx) in headers"
-                                :key="colIdx"
-                              >
-                                {{ col.text }}</v-list-item
-                              >
-                            </v-list>
-                          </v-card>
-                        </v-col> -->
-
                       <v-row no-gutters class="ma-1">
                         <v-btn
                           small
@@ -258,19 +217,31 @@
               -->
             </v-card>
             <template v-slot:activator="{ on }">
-              <v-btn small icon v-on="on" class="mr-1" color="success darken-2">
+              <v-btn
+                small
+                icon
+                v-on="on"
+                class="mr-1"
+                :color="
+                  $vuetify.theme.dark ? 'success lighten-2' : 'success darken-2'
+                "
+              >
                 <v-icon small>mdi-table-cog</v-icon>
               </v-btn>
             </template>
           </v-menu>
         </v-col>
-        <v-col cols="auto" style="position:relative" class="mr-n1">
-          <select v-model="activeLayout" class="g-datatable-header-layout">
-            <option :value="l" :key="l" v-for="l in getLayoutNames()">
-              {{ l }}
+        <v-col cols="auto" style="position: relative" class="mr-n1">
+          <select v-model="currentLayoutName" class="g-datatable-header-layout">
+            <option
+              :value="l.tpsLayoutName"
+              :key="l.layoutID"
+              v-for="l in layouts"
+            >
+              {{ l.tpsLayoutName }}
             </option>
           </select>
-          <v-icon small style="position: absolute;right: 3px; top: 3px;">
+          <v-icon small style="position: absolute; right: 3px; top: 3px">
             mdi-chevron-down
           </v-icon>
         </v-col>
@@ -278,14 +249,19 @@
           <v-btn
             small
             icon
-            :title="`Delete '${activeLayout}' layout`"
-            @click="deleteLayout(activeLayout)"
+            :title="`Delete '${currentLayoutName}' layout`"
+            @click="deleteLayout()"
           >
             <v-icon small color="error">mdi-minus</v-icon>
           </v-btn>
         </v-col>
         <v-col cols="auto" class="mr-n1">
-          <v-btn small icon title="Create new layout" @click="createNewLayout">
+          <v-btn
+            small
+            icon
+            title="Create new layout"
+            @click="createNewLayout('')"
+          >
             <v-icon small color="primary">mdi-plus</v-icon>
           </v-btn>
         </v-col>
@@ -294,7 +270,7 @@
             small
             icon
             @click="saveLayout()"
-            :title="`Save '${activeLayout}' layout`"
+            :title="`Save '${currentLayoutName}' layout`"
           >
             <v-icon small color="primary">mdi-floppy</v-icon>
           </v-btn>
@@ -308,18 +284,22 @@
           />
           <v-icon
             small
-            style="position:absolute; right: 0; top: 4px;"
+            style="position: absolute; right: 0; top: 4px"
             @click="
               quickSearch = '';
               syncFilteredItems();
             "
           >
-            {{ quickSearch ? "mdi-close" : "mdi-magnify" }}
+            {{ quickSearch ? 'mdi-close' : 'mdi-magnify' }}
           </v-icon>
         </v-col>
       </v-row>
     </div>
-    <div class="g-datatable-container" @scroll="scrolling">
+    <div
+      class="g-datatable-container"
+      @scroll="scrolling"
+      :style="{ height: height + 'px' }"
+    >
       <div class="g-datatable-sticky">
         <div class="g-datatable-headers">
           <v-menu
@@ -329,7 +309,7 @@
             offset-y
             :close-on-content-click="false"
             v-model="filterMenu"
-            style="z-index: 100;"
+            style="z-index: 100"
           >
             <v-card dense width="275px">
               <v-card-title>
@@ -347,6 +327,7 @@
                   <v-btn
                     tile
                     x-small
+                    :disabled="switchingMode"
                     @click="reorder(filterMenuModel.value, -headers.length)"
                   >
                     <v-icon small>mdi-arrow-expand-left</v-icon>
@@ -354,6 +335,7 @@
                   <v-btn
                     tile
                     x-small
+                    :disabled="switchingMode"
                     @click="reorder(filterMenuModel.value, -1)"
                   >
                     <v-icon small>mdi-arrow-left</v-icon>
@@ -361,6 +343,7 @@
                   <v-btn
                     tile
                     x-small
+                    :disabled="switchingMode"
                     @click="reorder(filterMenuModel.value, +1)"
                   >
                     <v-icon small>mdi-arrow-right</v-icon>
@@ -368,6 +351,7 @@
                   <v-btn
                     tile
                     x-small
+                    :disabled="switchingMode"
                     @click="reorder(filterMenuModel.value, headers.length)"
                   >
                     <v-icon small>mdi-arrow-expand-right</v-icon>
@@ -378,17 +362,24 @@
                     fab
                     color="warning"
                     x-small
+                    :disabled="switchingMode"
                     @click="toggleColumnVisible(filterMenuModel)"
                   >
                     <v-icon small>
-                      {{ filterMenuModel.hidden ? "mdi-eye" : "mdi-eye-off" }}
+                      {{ filterMenuModel.hidden ? 'mdi-eye' : 'mdi-eye-off' }}
                     </v-icon>
                   </v-btn>
                 </v-row>
                 <v-row class="mx-0">
                   <v-select
+                    :disabled="switchingMode"
                     v-model="filterConditions[filterMenuModel.value]"
-                    @change="updateTempFilters(tempFilters[filterMenuModel.value], filterMenuModel.value)"
+                    @change="
+                      updateTempFilters(
+                        tempFilters[filterMenuModel.value],
+                        filterMenuModel.value,
+                      )
+                    "
                     dense
                     solo
                     hide-details
@@ -454,7 +445,7 @@
             </v-card>
           </v-menu>
           <div
-            v-for="(h, hIdx) in headers.filter(h => !h.hidden)"
+            v-for="(h, hIdx) in headers.filter((h) => !h.hidden)"
             :key="hIdx"
             :ref="`header-${h.value}`"
             class="g-datatable-header-col"
@@ -465,7 +456,7 @@
               <v-row
                 no-gutters
                 @click="toggleHeader(h.value, $event)"
-                style="max-height: 1.2rem; overflow: hidden;"
+                style="max-height: 1.2rem; overflow: hidden"
               >
                 <v-col cols="auto">
                   <span>{{ h.text }}</span>
@@ -484,7 +475,7 @@
                 <v-spacer></v-spacer>
                 <v-col cols="auto" style="position: relative">
                   <v-icon
-                    style="position:absolute; right: 0; top: 2px;"
+                    style="position: absolute; right: 0; top: 2px"
                     small
                     class="g-filter-icon"
                     @click.stop="showMenu(h, $event)"
@@ -496,6 +487,7 @@
               </v-row>
               <div class="g-datatable-filterrow g-datatable-filtercell">
                 <input
+                  :disabled="switchingMode"
                   @keydown.enter="syncFilteredItems"
                   placeholder="*"
                   v-model="filters[h.value]"
@@ -526,7 +518,7 @@
           </div>
         </div>
       </div>
-      <div class="g-loader" v-show="loadingInternal">
+      <div class="g-loader" v-show="loadingInternal || switchingMode">
         <v-progress-circular
           class="mr-2"
           size="25"
@@ -536,31 +528,48 @@
         <span class="body-1">Loading... Please wait</span>
       </div>
       <div
+        class="g-loader"
+        v-show="
+          !(loadingInternal || switchingMode) &&
+          items.length &&
+          !visibleItems.length
+        "
+      >
+        <span class="body-1"
+          >No data for specified filters. Check filters' conditions.</span
+        >
+      </div>
+        <v-menu v-model="menu" :position-x="menuOffsetX" :position-y="menuOffsetY" absolute offset-y>
+          <slot name="menu">
+          </slot>
+        </v-menu>
+      <div
         class="g-datatable-body"
         :style="{ minHeight: containerHeight + 'px' }"
         v-if="items.length"
       >
         <div
+          @contextmenu="showRowMenu"
           @pointerdown.stop="toggleSelection(row, $event)"
           class="g-datatable-row"
-          v-for="(row, rowIdx) in visibleItems"
+          v-for="(row, rowIdx) in switchingMode ? [] : visibleItems"
           :key="row[trackId]"
           :data-rowidx="rowIdx"
           :class="{
             odd: (beginIdx + rowIdx) % 2 === 1,
             selected: selectedItems.has(row),
-            active: row === lastSelectedItem
+            active: row === lastSelectedItem,
           }"
           :style="{
             height: rowHeight + 'px',
             top: beginIdx * rowHeight + rowHeight * rowIdx + 'px',
-            left: colOffset + 'px'
+            left: colOffset + 'px',
           }"
         >
           <div
             class="gd-cell"
             v-for="(h, hIdx) in visibleHeaders"
-            :key="h.value"
+            :key="hIdx"
             :style="{ width: nWidth(h.width) }"
           >
             <slot
@@ -584,7 +593,26 @@
       </div>
     </div>
     <div class="g-datatable-footer">
-      <slot name="footer"></slot>
+      <slot name="footer-prepend"></slot>
+      <slot name="footer">
+        <div class="g-filters-list">
+          <span v-if="!Object.keys(filters).length">No</span>
+          Filters
+          <v-chip
+            close
+            color="info"
+            @click:close="resetFilter(fName)"
+            small
+            v-show="f"
+            :key="fName"
+            v-for="(f, fName) in filters"
+            class="g-filter-item"
+          >
+            {{ getFilterText(fName) }}
+          </v-chip>
+        </div>
+      </slot>
+      <slot name="footer-append"></slot>
     </div>
   </div>
 </template>
@@ -592,9 +620,26 @@
 <script src="./GDataGrid.ts"></script>
 
 <style lang="scss">
+.g-ab-datatable {
+  .g-datatable-row {
+    border-top: none;
+  }
+  .gd-cell {
+    padding: 0;
+    display: flex;
+    > div {
+      padding: 1px 2px;
+      width: 100%;
+    }
+  }
+}
+
 .v-application.theme--dark {
   .g-datatable {
-    --background: #222;
+    .g-datatable-body {
+      color: yellow;
+    }
+    --background: #000;
     --header-bgnd-color: linear-gradient(
       180deg,
       rgba(100, 100, 100, 1) 0%,
@@ -664,7 +709,6 @@
 
   font-size: small;
   min-height: 200px;
-  max-height: 80vh;
   overflow-y: scroll;
   border: 1px solid var(--outline-color);
 }
@@ -699,6 +743,10 @@
 .g-datatable-header-col-label {
   padding: 0 3px 3px 2px;
   flex: 1;
+
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
 }
 .g-datatable-filterrow {
   &.g-datatable-filtercell {
@@ -731,8 +779,9 @@
   }
 }
 .g-datatable-body {
-  font-size: smaller;
+  font-size: small;
   position: relative;
+  color: #222;
 }
 .g-datatable-row {
   display: flex;
@@ -789,11 +838,12 @@ select.g-datatable-header-layout {
   border: 1px solid var(--header-border-color);
   background: var(--header-filter-bgnd-noval-color);
   margin-right: 4px;
-  padding: 0 3px;
-  height: 1.2rem;
+  padding: 4px 16px 1 3px;
+  height: 1.25rem;
   font-size: small;
   outline: none;
-  width: 100px;
+  min-width: 100px;
+  max-width: 170px;
 }
 
 .g-toolbar {
@@ -805,8 +855,8 @@ select.g-datatable-header-layout {
     width: 100px;
     border: 1px solid var(--header-border-color);
     border-radius: none;
-    padding: 0 16px 0 2px;
-    height: 1.2rem;
+    padding: 3px 16px 0 2px;
+    height: 1.25rem;
     font-size: small;
     outline: none;
     background: var(--header-filter-bgnd-noval-color);
@@ -836,5 +886,8 @@ select.g-datatable-header-layout {
 }
 .g-drag-poiner {
   cursor: move;
+}
+.g-filters-list {
+  padding: 4px;
 }
 </style>
