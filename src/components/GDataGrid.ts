@@ -1,45 +1,12 @@
-import clientFactory from '@/backend/client-factory';
-import { DataWrapper, TPSUserJsonGridLayout } from '@/backend/generated';
 import Vue from 'vue';
 import { Component, Prop, Watch } from 'vue-property-decorator';
-
-const layoutApi = clientFactory.createGridLayoutApi();
-
-export interface ILayout {
-    headers: IHeaderModel[];
-    filters: Record<string, string>;
-    sortColumns: string[];
-    quickSearch: string;
-    filterConditions: FilterConditions;
-}
-
-export interface IHeaderModel {
-    value: string;
-    text?: string;
-    format?: string;
-    hidden?: boolean;
-    width: number;
-}
-
-export type FilterConditions = (
-    'Contains' | 'Equals' |
-    'Starts With' | 'Ends With' |
-    'Not Equal' | 'Greater Than' |
-    'Less Than' | 'In');
+import { LayoutApi, IHeaderModel, FilterConditions, JsonGridLayout, ILayout } from './LayoutApi';
+import { LocalStorageLayoutApi } from './LocalStorageLayoutApi';
 
 @Component({})
 export default class GDataGridClass extends Vue {
 
     /** Properties */
-
-    @Prop({ default: () => [] })
-    public items!: any[];
-
-    @Prop({ default: 'Items', type: String })
-    public toolbarName!: string;
-
-    @Prop({ default: 200, type: Number })
-    public height!: number;
 
     @Prop({ required: true })
     public tableId!: string;
@@ -47,16 +14,31 @@ export default class GDataGridClass extends Vue {
     @Prop({ required: true })
     public trackId!: string;
 
+    @Prop({ default: () => [] })
+    public items!: any[];
+
+    @Prop({ default: () => null })
+    public calcRowHeight!: (r: any, expand: boolean) => number;
+
+    @Prop({ default: 'Items', type: String })
+    public toolbarName!: string;
+
+    @Prop({ default: 200, type: Number })
+    public height!: number;
+
+    @Prop({ default: () => (new LocalStorageLayoutApi()) })
+    public layoutApi!: LayoutApi;
+
     @Prop({ default: () => ([]) })
     public headers!: IHeaderModel[];
 
-    @Prop({ default: 22 })
+    @Prop({ default: 25 })
     public rowHeight!: number;
 
-    @Prop({ default: 30 })
+    @Prop({ default: 200 })
     public itemsBefore!: number;
 
-    @Prop({ default: 40 })
+    @Prop({ default: 300 })
     public itemsAfter!: number;
 
     @Prop({ default: 200 })
@@ -70,6 +52,15 @@ export default class GDataGridClass extends Vue {
 
     @Prop({ default: false, type: Boolean })
     public singleSorting!: boolean;
+
+    @Prop({ default: false, type: Boolean })
+    public loading!: boolean;
+
+    @Prop({ default: `No data for specified filters. Check filters' conditions.` })
+    public noDataForFilter!: string;
+
+    @Prop({ default: `Loading... Please wait` })
+    public noData!: string;
 
     @Prop({ default: false, type: Boolean })
     public multipleSelection!: boolean;
@@ -94,9 +85,6 @@ export default class GDataGridClass extends Vue {
     @Prop({ default: 1000 })
     public doubleClickDuration!: number;
 
-    @Prop({ default: false })
-    public loading!: boolean;
-
     @Prop()
     public selectedItem!: any;
 
@@ -119,7 +107,6 @@ export default class GDataGridClass extends Vue {
     public top = 0;
     public left = 0;
     public beginIdx = 0;
-    public exportFormatted = true;
 
     public lastSelectedItem: any = {};
     public lastSelectedItemTime?: Date;
@@ -153,11 +140,12 @@ export default class GDataGridClass extends Vue {
     private visualRowsChangedCount = 0;
     private switchingMode = false;
 
-    //#region R
-    private layouts: TPSUserJsonGridLayout[] = [];
+    private layouts: JsonGridLayout[] = [];
     private currentLayoutName = '';
     private renamingStage = false;
-    //#endregion
+    private headersInternal: IHeaderModel[] = [];
+    private rowOffsets: number[] = [];
+    private rowExpanded: Record<any, boolean> = {};
 
     /** Getters (computed) */
 
@@ -166,7 +154,7 @@ export default class GDataGridClass extends Vue {
     }
 
     public get layout() {
-        return this.layouts.find((l) => l.tpsLayoutName === this.currentLayoutName);
+        return this.layouts.find((l) => l.layoutName === this.currentLayoutName);
     }
 
     public get conditions() {
@@ -197,7 +185,7 @@ export default class GDataGridClass extends Vue {
 
     public get layoutObject(): ILayout {
         return JSON.parse(JSON.stringify({
-            headers: this.headers,
+            headers: this.headersInternal,
             filters: this.filters,
             sortColumns: this.sortColumns,
             quickSearch: this.quickSearch,
@@ -206,24 +194,27 @@ export default class GDataGridClass extends Vue {
     }
 
     public set layoutObject(value: ILayout) {
-        const cloned = JSON.parse(JSON.stringify(value));
-        this.filters = cloned.filters;
-        this.sortColumns = cloned.sortColumns;
-        this.quickSearch = cloned.quickSearch ?? '';
-        this.filterConditions = cloned.filterConditions ?? {};
-        this.$emit('update:headers', cloned.headers);
+        this.filters = value.filters;
+        this.sortColumns = value.sortColumns;
+        this.quickSearch = value.quickSearch ?? '';
+        this.filterConditions = value.filterConditions ?? {};
+        this.headersInternal = value.headers;
+        this.$emit('update:headers', value.headers);
+        this.syncFilteredItems();
+        this.updateVisibleHeaders();
+
     }
 
     /** Public functions */
 
     public exportSelected() {
         this.fnExcelReport(this.filteredItems);
-        this.$emit('export-selected', { format: this.exportFormatted });
+        this.$emit('export-selected');
     }
 
     public exportAll() {
         this.fnExcelReport(this.items);
-        this.$emit('export-all', { format: this.exportFormatted });
+        this.$emit('export-all');
     }
 
     public widthNumber(w: any): number {
@@ -311,18 +302,18 @@ export default class GDataGridClass extends Vue {
     }
 
     public reorder(fieldName: string, delta: number) {
-        let colIndex = this.headers.findIndex((h) => h.value === fieldName);
+        let colIndex = this.headersInternal.findIndex((h) => h.value === fieldName);
         if (colIndex < 0) { return; }
-        const header = this.headers[colIndex];
-        this.headers.splice(colIndex, 1);
+        const header = this.headersInternal[colIndex];
+        this.headersInternal.splice(colIndex, 1);
         colIndex += delta;
         if (colIndex < 0) {
             colIndex = 0;
         }
-        if (colIndex >= this.headers.length) {
-            colIndex = this.headers.length;
+        if (colIndex >= this.headersInternal.length) {
+            colIndex = this.headersInternal.length;
         }
-        this.headers.splice(colIndex, 0, header);
+        this.headersInternal.splice(colIndex, 0, header);
         this.updateVisibleHeaders();
         this.scrollIntoColumn(header.value);
     }
@@ -464,12 +455,12 @@ export default class GDataGridClass extends Vue {
     }
 
     public hideAllColumns() {
-        this.headers.forEach((h) => h.hidden = true);
+        this.headersInternal.forEach((h) => h.hidden = true);
         this.updateVisibleHeaders();
     }
 
     public showAllColumns() {
-        this.headers.forEach((h) => h.hidden = false);
+        this.headersInternal.forEach((h) => h.hidden = false);
         this.updateVisibleHeaders();
     }
 
@@ -484,7 +475,7 @@ export default class GDataGridClass extends Vue {
         const initTime = new Date().valueOf();
 
         this.containerWidth = 0;
-        const headers = this.headers.filter((h) => !h.hidden);
+        const headers = this.headersInternal.filter((h) => !h.hidden);
         headers.forEach((h) => this.containerWidth += this.widthNumber(h.width));
 
         // Headers
@@ -537,29 +528,25 @@ export default class GDataGridClass extends Vue {
     public async updateVisibleItems(opacityAnimation = true) {
         // Recalculate container measure
         const initTime = new Date().valueOf();
-        this.containerHeight = this.rowHeight * this.filteredItems.length;
+        this.containerHeight = this.rowOffsets[this.rowOffsets.length - 1];
 
         // Init visible collections
         this.visibleItems = [];
-        this.beginIdx = Math.max(
-            0,
-            Math.round(this.top / this.rowHeight) - this.itemsBefore,
-        );
+        const beginOffset = Math.max(0, this.top - this.itemsBefore);
+        this.beginIdx = this.rowOffsets.findIndex(offset => offset >= beginOffset);
+        if (this.beginIdx < 0) {
+            this.beginIdx = 0;
+        }
 
         // Items
-
-        const endIdx = Math.min(
-            this.beginIdx +
-            Math.round(this.$el.clientHeight / this.rowHeight) +
-            this.itemsAfter +
-            this.itemsBefore,
-            this.filteredItems.length - 1,
-        );
-
+        const endOffset = Math.min(this.containerHeight, this.top + this.$el.clientHeight + this.itemsAfter);
+        let endIdx = this.rowOffsets.findIndex(offset => offset >= endOffset);
+        if (endIdx < 0) {
+            endIdx = this.filteredItems.length - 1;
+        }
         for (let i = this.beginIdx; i <= endIdx; i++) {
             this.visibleItems.push(this.filteredItems[i]);
         }
-
 
         // Visualization
         await this.$nextTick();
@@ -606,10 +593,6 @@ export default class GDataGridClass extends Vue {
                 }
             }
         });
-        if (!Vue.config.productionTip) {
-            // tslint:disable-next-line:no-console
-            // console.log('updateVisibleItems', new Date().valueOf() - initTime);
-        }
         this.loadingInternal = false;
     }
 
@@ -686,7 +669,6 @@ export default class GDataGridClass extends Vue {
         if (!this.tableId) {
             return;
         }
-        console.log('TableID changed', this.tableId);
         this.switchingMode = true;
         this.clearSelection();
         await this.initialize();
@@ -696,7 +678,7 @@ export default class GDataGridClass extends Vue {
     @Watch('items', { deep: true })
     public syncFilteredItems() {
         clearTimeout(this.syncTimeoutId);
-        const allKeys = this.headers.map((h) => h.value);
+        const allKeys = this.headersInternal.map((h) => h.value);
         const filterKeys = Object.keys(this.filters).filter((k) => this.filters[k]);
         const quickSearch = this.quickSearch?.toUpperCase();
         if (filterKeys.length || quickSearch) {
@@ -718,7 +700,34 @@ export default class GDataGridClass extends Vue {
         } else {
             this.filteredItems = this.sortItems(this.items.map((i) => i));
         }
-        this.updateVisibleItems(false);
+        this.recalcOffsets();
+    }
+    private async recalcOffsets() {
+        let cursor = 0;
+        const c = this.calcRowHeight ?? this.calcRowHeightDefault;
+        this.rowOffsets = this.filteredItems.map((row: any) => (cursor += c(row, this.rowExpanded[row[this.trackId]])));
+        await this.updateVisibleItems(false);
+    }
+
+    public initDefaultHeaders() {
+        this.headersInternal.push(...Object.keys(this.items[0]).map((k) => ({
+            value: k,
+            text: this.humanize(k),
+            width: 100,
+            hidden: false,
+        })));
+    }
+
+    public toggleExpand(row: any) {
+        this.rowExpanded[row[this.trackId]] = !this.rowExpanded[row[this.trackId]];
+        this.recalcOffsets();
+    }
+
+    public humanize(k: string): string {
+        return k
+            .replace(/^[\s_]+|[\s_]+$/g, '')
+            .replace(/[_\s]+/g, ' ')
+            .replace(/^[a-z]/, (m) => m.toUpperCase());
     }
 
     @Watch('sortColumns', { deep: true })
@@ -832,7 +841,7 @@ export default class GDataGridClass extends Vue {
     }
 
     public getHeader(fieldName: string) {
-        return this.headers.find((h) => h.value === fieldName);
+        return this.headersInternal.find((h) => h.value === fieldName);
     }
 
     public getShortCondition(condition: FilterConditions) {
@@ -849,10 +858,12 @@ export default class GDataGridClass extends Vue {
 
     /** Save current layout with specified name */
     public async saveLayout() {
-        await layoutApi.updateLayout(
-            this.layout?.layoutID,
-            new DataWrapper({ data: JSON.stringify(this.layoutObject) }),
-        );
+        if (this.layout) {
+            await this.layoutApi.updateLayout(
+                this.layout,
+                this.layoutObject,
+            );
+        }
     }
 
     /** Ask user for new layout name and create new layout from current layout view */
@@ -861,28 +872,35 @@ export default class GDataGridClass extends Vue {
             newLayoutName = prompt('Enter new layout name') ?? undefined;
         }
         if (newLayoutName) {
-            this.layouts.push(await layoutApi.addLayout(new TPSUserJsonGridLayout({
+            this.layouts.push(await this.layoutApi.addLayout({
                 isPublic: false,
-                tpsLayoutName: newLayoutName,
-                tpsGridViewName: this.tableId,
-                tpsGridLayout: JSON.stringify(this.layoutObject),
-            })));
+                layoutName: newLayoutName,
+                tableID: this.tableId,
+                gridLayoutJson: JSON.stringify(this.layoutObject),
+            } as JsonGridLayout));
             this.currentLayoutName = newLayoutName;
         }
     }
 
     /** Delete named layout from storage */
     public async deleteLayout() {
-        if (prompt('Delete current layout? Type `yes` to confirm.') === 'yes') {
-            const layoutIndex = this.layouts.findIndex((l) => l.tpsLayoutName === this.currentLayoutName);
-            layoutApi.deleteLayout(this.layout?.layoutID);
-            this.currentLayoutName = this.layouts[0].tpsLayoutName ?? 'Default';
+        if (this.layout && prompt('Delete current layout? Type `yes` to confirm.') === 'yes') {
+            const layoutIndex = this.layouts.findIndex((l) => l.layoutName === this.currentLayoutName);
+            await this.layoutApi.deleteLayout(this.layout);
+            this.currentLayoutName = this.layouts[0].layoutName ?? 'Default';
             this.layouts.splice(layoutIndex, 1);
             this.$forceUpdate();
         }
     }
 
     /** Private functions */
+
+    private calcRowHeightDefault(row: any, expand: boolean) {
+        if (expand) {
+            return this.rowHeight + 100;
+        }
+        return this.rowHeight;
+    }
 
     private filterItem(item: any, filterKeys: string[], filter?: any) {
         const hasCustomFilter = filter !== undefined;
@@ -1014,6 +1032,7 @@ export default class GDataGridClass extends Vue {
     private headersChanged() {
         this.tempTexts = {};
         this.headers.forEach((h) => { this.tempTexts[h.value] = h.text ?? h.value; });
+        this.headersInternal = this.headers;
         this.updateVisibleHeaders();
     }
 
@@ -1023,7 +1042,8 @@ export default class GDataGridClass extends Vue {
             this.colValues[fieldName] = this.getColValues(fieldName);
             this.closeFilter();
         } else {
-            this.tempTexts[fieldName] = this.headers.find((h) => h.value === fieldName)?.text ?? this.tempTexts[fieldName];
+            this.tempTexts[fieldName] = this.headersInternal.find((h) => h.value === fieldName)?.text
+                ?? this.tempTexts[fieldName];
         }
     }
 
@@ -1038,15 +1058,15 @@ export default class GDataGridClass extends Vue {
     private tableMenuChanged() {
         if (this.tableMenu) {
             const hiddenColl: IHeaderModel[] = [];
-            for (let index = 0; index < this.headers.length; index++) {
-                const header = this.headers[index];
+            for (let index = 0; index < this.headersInternal.length; index++) {
+                const header = this.headersInternal[index];
                 if (!header.hidden) {
                     hiddenColl.push(header);
-                    this.headers.splice(index, 1);
+                    this.headersInternal.splice(index, 1);
                     index--;
                 }
             }
-            this.headers.splice(0, 0, ...hiddenColl);
+            this.headersInternal.splice(0, 0, ...hiddenColl);
         } else if (!this.filterMenu) {
             this.closeFilter();
         }
@@ -1078,14 +1098,13 @@ export default class GDataGridClass extends Vue {
             this.renamingStage = false;
             return;
         }
-        const layout = this.layouts.find((l) => l.tpsLayoutName === this.currentLayoutName);
+        const layout = this.layouts.find((l) => l.layoutName === this.currentLayoutName);
         if (layout) {
-            let parsedLayout = JSON.parse(layout?.tpsGridLayout ?? '{}') as (ILayout | any[]);
+            let parsedLayout = JSON.parse(layout?.gridLayoutJson ?? '{}') as (ILayout | any[]);
             if (Array.isArray(parsedLayout)) {
                 parsedLayout = Object.assign(this.layoutObject,
                     { headers: parsedLayout, filters: {}, sortColumns: [], quickSearch: '', filterConditions: {} });
             }
-            // parsedLayout.headers.forEach((h) => h.)
             this.layoutObject = parsedLayout;
         }
     }
@@ -1098,24 +1117,28 @@ export default class GDataGridClass extends Vue {
 
     private async renameLayout(newName: string) {
         if (this.layout && newName) {
-            if (this.layouts.some((x) => x.tpsLayoutName === newName)) {
+            if (this.layouts.some((x) => x.layoutName === newName)) {
                 return;
             }
-            await layoutApi.renameLayout(this.layout.layoutID, newName);
+            await this.layoutApi.renameLayout(this.layout, newName);
             this.renamingStage = true;
-            this.layout.tpsLayoutName = newName;
+            this.layout.layoutName = newName;
             this.currentLayoutName = newName;
         }
     }
 
     private async loadLayouts() {
-        this.layouts = await layoutApi.getLayouts(this.tableId);
+        this.layouts = await this.layoutApi.getLayouts(this.tableId);
         if (!this.layouts || !this.layouts.length) {
+            this.initDefaultHeaders();
             await this.createNewLayout('Default');
         }
     }
 
+
     private async mounted() {
+        addEventListener('keydown', this.keydown);
+        this.headersInternal = this.headers;
         this.$root.$on('gdatagrid.add', (payload: any) => {
             if (payload.id === this.tableId) {
                 this.addItems(payload.items);
@@ -1140,18 +1163,31 @@ export default class GDataGridClass extends Vue {
 
         await this.initialize();
     }
+    private keydown(e: KeyboardEvent) {
+        if (e.code === 'KeyA' && e.ctrlKey) {
+            this.selectAll();
+            e.preventDefault();
+        } else if (e.code == 'KeyF' && e.ctrlKey) {
+            if (document.activeElement !== this.$refs.qsinput) {
+                const inputEl = this.$refs.qsinput as HTMLInputElement;
+                if (inputEl) {
+                    inputEl.setSelectionRange(0, inputEl.value.length);
+                    inputEl.focus();
+                }
+                e.preventDefault();
+            }
+        }
+    }
 
     private async initialize() {
         await this.loadLayouts();
-        this.currentLayoutName = localStorage.getItem(this.storageId) ?? this.layouts[0].tpsLayoutName ?? 'Default';
+        this.currentLayoutName = localStorage.getItem(this.storageId) ?? this.layouts[0].layoutName ?? 'Default';
         this.currentLayoutNameChanged();
-        this.syncFilteredItems();
-        await this.updateVisibleItems(false);
-        await this.updateVisibleHeaders();
         this.loadingInternal = this.loading;
     }
 
     private beforeDestroy() {
+        removeEventListener('keydown', this.keydown);
         this.$root.$off('gdatagrid.add');
         this.$root.$off('gdatagrid.delete');
         this.$root.$off('gdatagrid.highlight');

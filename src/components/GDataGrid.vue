@@ -2,7 +2,7 @@
   <div class="g-datatable" v-resize="windowResized">
     <div class="g-toolbar">
       <v-row no-gutters align="center">
-        <v-col cols="auto">
+        <v-col cols="auto" class="d-flex align-content-center">
           <slot name="label">
             <v-row no-gutters class="caption" align="center">
               <slot name="prepend-label">
@@ -50,7 +50,7 @@
           </slot>
         </v-col>
         <v-spacer></v-spacer>
-        <v-col cols="auto">
+        <v-col cols="auto" class="d-flex align-content-center">
           <v-menu
             left
             :close-on-content-click="false"
@@ -62,7 +62,7 @@
               <v-card-text>
                 <v-tabs v-model="tab">
                   <v-tab key="1">
-                    <v-icon left>mdi-table-column-width</v-icon>
+                    <v-icon left>mdi-table-settings</v-icon>
                     Columns
                   </v-tab>
                   <v-tab key="2">
@@ -84,7 +84,7 @@
                           <v-virtual-scroll
                             :bench="1"
                             ref="headerList"
-                            :items="headers"
+                            :items="headersInternal"
                             height="400"
                             item-height="28"
                             style="overflow-x: hidden"
@@ -148,11 +148,11 @@
                                   >
                                     <v-icon small left>
                                       {{
-                                        item.hidden ? 'mdi-eye' : 'mdi-eye-off'
+                                        item.hidden ? "mdi-eye" : "mdi-eye-off"
                                       }}
                                     </v-icon>
                                     <v-spacer></v-spacer>
-                                    {{ item.hidden ? 'Show' : 'Hide' }}
+                                    {{ item.hidden ? "Show" : "Hide" }}
                                   </v-btn>
                                 </v-col>
                               </v-row>
@@ -184,11 +184,7 @@
                     <v-tab-item key="2">
                       <v-card class="ma-1">
                         <v-card-text>
-                          <v-switch
-                            label="Save format (XLS)"
-                            inset
-                            v-model="exportFormatted"
-                          ></v-switch>
+                          <slot name="export"></slot>
                         </v-card-text>
                         <v-card-actions>
                           <v-spacer></v-spacer>
@@ -226,7 +222,7 @@
                   $vuetify.theme.dark ? 'success lighten-2' : 'success darken-2'
                 "
               >
-                <v-icon small>mdi-table-cog</v-icon>
+                <v-icon small>mdi-table-settings</v-icon>
               </v-btn>
             </template>
           </v-menu>
@@ -234,14 +230,14 @@
         <v-col cols="auto" style="position: relative" class="mr-n1">
           <select v-model="currentLayoutName" class="g-datatable-header-layout">
             <option
-              :value="l.tpsLayoutName"
+              :value="l.layoutName"
               :key="l.layoutID"
               v-for="l in layouts"
             >
-              {{ l.tpsLayoutName }}
+              {{ l.layoutName }}
             </option>
           </select>
-          <v-icon small style="position: absolute; right: 3px; top: 3px">
+          <v-icon small style="position: absolute; right: 3px; top: 6px">
             mdi-chevron-down
           </v-icon>
         </v-col>
@@ -279,18 +275,19 @@
           <input
             class="g-quick-search"
             placeholder="Quick Search"
+            ref="qsinput"
             v-model="quickSearch"
             @keydown.enter="syncFilteredItems"
           />
           <v-icon
             small
-            style="position: absolute; right: 0; top: 4px"
+            style="position: absolute; right: 0; top: 6px"
             @click="
               quickSearch = '';
               syncFilteredItems();
             "
           >
-            {{ quickSearch ? 'mdi-close' : 'mdi-magnify' }}
+            {{ quickSearch ? "mdi-close" : "mdi-magnify" }}
           </v-icon>
         </v-col>
       </v-row>
@@ -328,7 +325,9 @@
                     tile
                     x-small
                     :disabled="switchingMode"
-                    @click="reorder(filterMenuModel.value, -headers.length)"
+                    @click="
+                      reorder(filterMenuModel.value, -headersInternal.length)
+                    "
                   >
                     <v-icon small>mdi-arrow-expand-left</v-icon>
                   </v-btn>
@@ -352,7 +351,9 @@
                     tile
                     x-small
                     :disabled="switchingMode"
-                    @click="reorder(filterMenuModel.value, headers.length)"
+                    @click="
+                      reorder(filterMenuModel.value, headersInternal.length)
+                    "
                   >
                     <v-icon small>mdi-arrow-expand-right</v-icon>
                   </v-btn>
@@ -366,7 +367,7 @@
                     @click="toggleColumnVisible(filterMenuModel)"
                   >
                     <v-icon small>
-                      {{ filterMenuModel.hidden ? 'mdi-eye' : 'mdi-eye-off' }}
+                      {{ filterMenuModel.hidden ? "mdi-eye" : "mdi-eye-off" }}
                     </v-icon>
                   </v-btn>
                 </v-row>
@@ -377,7 +378,7 @@
                     @change="
                       updateTempFilters(
                         tempFilters[filterMenuModel.value],
-                        filterMenuModel.value,
+                        filterMenuModel.value
                       )
                     "
                     dense
@@ -411,6 +412,7 @@
                       <v-list-item
                         max-height="32"
                         dense
+                        class="text-left"
                         @click="selectFilter(filterMenuModel.value, item)"
                       >
                         <v-list-item-content>
@@ -445,7 +447,7 @@
             </v-card>
           </v-menu>
           <div
-            v-for="(h, hIdx) in headers.filter((h) => !h.hidden)"
+            v-for="(h, hIdx) in headersInternal.filter((h) => !h.hidden)"
             :key="hIdx"
             :ref="`header-${h.value}`"
             class="g-datatable-header-col"
@@ -459,7 +461,7 @@
                 style="max-height: 1.2rem; overflow: hidden"
               >
                 <v-col cols="auto">
-                  <span>{{ h.text }}</span>
+                  <span>{{ h.text || humanize(h.value) }}</span>
                 </v-col>
                 <v-col cols="auto">
                   <v-icon small v-if="sortColumns.includes(h.value)">
@@ -518,14 +520,17 @@
           </div>
         </div>
       </div>
-      <div class="g-loader" v-show="loadingInternal || switchingMode">
+      <div
+        class="g-loader"
+        v-show="loadingInternal || switchingMode || loading"
+      >
         <v-progress-circular
           class="mr-2"
           size="25"
           color="primary"
           indeterminate
         ></v-progress-circular>
-        <span class="body-1">Loading... Please wait</span>
+        <span class="body-1">{{ noData }}</span>
       </div>
       <div
         class="g-loader"
@@ -535,14 +540,19 @@
           !visibleItems.length
         "
       >
-        <span class="body-1"
-          >No data for specified filters. Check filters' conditions.</span
-        >
+        <span class="body-1">
+          {{ noDataForFilter }}
+        </span>
       </div>
-        <v-menu v-model="menu" :position-x="menuOffsetX" :position-y="menuOffsetY" absolute offset-y>
-          <slot name="menu">
-          </slot>
-        </v-menu>
+      <v-menu
+        v-model="menu"
+        :position-x="menuOffsetX"
+        :position-y="menuOffsetY"
+        absolute
+        offset-y
+      >
+        <slot name="menu"> </slot>
+      </v-menu>
       <div
         class="g-datatable-body"
         :style="{ minHeight: containerHeight + 'px' }"
@@ -555,6 +565,8 @@
           v-for="(row, rowIdx) in switchingMode ? [] : visibleItems"
           :key="row[trackId]"
           :data-rowidx="rowIdx"
+          :expanded="rowExpanded[row[trackId]]"
+          :toggle-expand="toggleExpand"
           :class="{
             odd: (beginIdx + rowIdx) % 2 === 1,
             selected: selectedItems.has(row),
@@ -562,7 +574,7 @@
           }"
           :style="{
             height: rowHeight + 'px',
-            top: beginIdx * rowHeight + rowHeight * rowIdx + 'px',
+            top: (rowOffsets[rowIdx + beginIdx - 1] || 0) + 'px',
             left: colOffset + 'px',
           }"
         >
@@ -577,6 +589,8 @@
               :item="row"
               :index="beginIdx + rowIdx + itemsBefore"
               :value="row[h.value]"
+              :expanded="rowExpanded[row[trackId]]"
+              :toggle-expand="toggleExpand"
             >
               <div v-if="quickSearch">
                 <span v-text="qsLeft(getCellValue(row, h))"></span>
@@ -589,6 +603,17 @@
               <div v-else v-text="getCellValue(row, h)"></div>
             </slot>
           </div>
+          <div
+            class="gd-details"
+            v-if="rowExpanded[row[trackId]]"
+            :style="{
+              top: rowHeight + 'px',
+              height:
+                (calcRowHeight || calcRowHeightDefault)(row, rowExpanded[row[trackId]]) - rowHeight + 'px',
+            }"
+          >
+            <slot name="details" :item="row"></slot>
+          </div>
         </div>
       </div>
     </div>
@@ -596,13 +621,13 @@
       <slot name="footer-prepend"></slot>
       <slot name="footer">
         <div class="g-filters-list">
-          <span v-if="!Object.keys(filters).length">No</span>
-          Filters
+          <span v-if="!Object.keys(filters).length">No Filters</span>
           <v-chip
             close
-            color="info"
             @click:close="resetFilter(fName)"
             small
+            label
+            color="primary"
             v-show="f"
             :key="fName"
             v-for="(f, fName) in filters"
@@ -779,8 +804,9 @@
   }
 }
 .g-datatable-body {
-  font-size: small;
+  font-size: 14px;
   position: relative;
+  text-align: left;
   color: #222;
 }
 .g-datatable-row {
@@ -788,7 +814,7 @@
   position: absolute;
   border-top: 1px solid var(--outline-color);
   background: var(--even-color);
-  &.active {
+  &.active .gd-cell {
     background: var(--active-color) !important;
     color: var(--active-text-color) !important;
   }
@@ -797,8 +823,8 @@
 .g-datatable-row.odd:hover {
   background: var(--row-hover-color);
 }
-.g-datatable-row.selected,
-.g-datatable-row.odd.selected {
+.g-datatable-row.selected .gd-cell,
+.g-datatable-row.odd.selected .gd-cell {
   background: var(--row-focus-color);
   color: var(--row-focus-text-color);
   outline: 1px solid var(--outline-color);
@@ -838,6 +864,7 @@ select.g-datatable-header-layout {
   border: 1px solid var(--header-border-color);
   background: var(--header-filter-bgnd-noval-color);
   margin-right: 4px;
+  margin-top: 4px;
   padding: 4px 16px 1 3px;
   height: 1.25rem;
   font-size: small;
@@ -859,6 +886,7 @@ select.g-datatable-header-layout {
     height: 1.25rem;
     font-size: small;
     outline: none;
+    margin-top: 4px;
     background: var(--header-filter-bgnd-noval-color);
   }
   .g-quick-search:focus {
@@ -868,6 +896,8 @@ select.g-datatable-header-layout {
 
 .g-datatable-footer {
   background: var(--outline-color);
+  text-align: left;
+  min-height: 32px;
 }
 .g-quickhighlight {
   background-color: yellow;
@@ -889,5 +919,9 @@ select.g-datatable-header-layout {
 }
 .g-filters-list {
   padding: 4px;
+}
+.gd-details {
+  position: absolute;
+  background: var(--outline-color);
 }
 </style>
