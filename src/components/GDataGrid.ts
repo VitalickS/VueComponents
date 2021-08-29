@@ -1,6 +1,6 @@
 import Vue from 'vue';
 import { Component, Prop, Watch } from 'vue-property-decorator';
-import { LayoutApi, IHeaderModel, FilterConditions, JsonGridLayout, ILayout } from './LayoutApi';
+import { LayoutApi, IHeaderModel, FilterConditions, JsonGridLayout, ILayout, IExportDataParameters, IHeaderType } from './LayoutApi';
 import { LocalStorageLayoutApi } from './LocalStorageLayoutApi';
 
 @Component({})
@@ -62,7 +62,7 @@ export default class GDataGridClass extends Vue {
     @Prop({ default: `Loading... Please wait` })
     public noData!: string;
 
-    @Prop({ default: false, type: Boolean })
+    @Prop({ default: true, type: Boolean })
     public multipleSelection!: boolean;
 
     @Prop({ default: 0 })
@@ -84,21 +84,30 @@ export default class GDataGridClass extends Vue {
 
     @Prop({ default: 1000 })
     public doubleClickDuration!: number;
-
     @Prop()
     public selectedItem!: any;
 
     @Prop({ default: () => (new Set<any>()) })
     public selectedItems!: Set<any>;
 
-    @Prop({ default: '<UNDEFINED>' })
+    @Prop({ default: () => ([]), type: Array })
+    public systemColumns!: string[];
+
+    @Prop({ default: '' })
     public undefinedText!: string;
+
+    @Prop({ default: true, type: Boolean })
+    public exportUseServer!: boolean;
+
+    @Prop({ default: true, type: Boolean })
+    public hasDefaultValueFormatOption!: boolean;
 
     /** Fields */
 
     public loadingInternal = false;
     public filteredItems: any[] = [];
     public quickSearch = '';
+    public useDefaultValueFormat = false;
 
     public sortColumns: string[] = [];
 
@@ -206,16 +215,58 @@ export default class GDataGridClass extends Vue {
     }
 
     /** Public functions */
-
     public exportSelected() {
-        this.fnExcelReport(this.filteredItems);
-        this.$emit('export-selected');
+        if (!this.exportUseServer) {
+            this.fnExcelReport(this.filteredItems);
+        } else {
+            this.$emit('export', {
+                name: this.$route.name ?? '',
+                rows: new Array(...this.selectedItems.values()).map((v) => {
+                    const exportrow = Object.assign({}, v);
+                    if (this.useDefaultValueFormat) {
+                        this.visibleHeaders.forEach((h) => {
+                            exportrow[h.value] = this.getCellValue(exportrow, h);
+                        });
+                    }
+                    return exportrow;
+                }),
+                headers: this.visibleHeaders
+                    .map((h) => ({
+                        format: h.format,
+                        text: h.text,
+                        value: h.value,
+                        width: Math.round(h.width),
+                    }) as IHeaderType),
+            } as IExportDataParameters);
+        }
     }
 
     public exportAll() {
-        this.fnExcelReport(this.items);
-        this.$emit('export-all');
+        if (!this.exportUseServer) {
+            this.fnExcelReport(this.items);
+        } else {
+            this.$emit('export', {
+                name: this.$route.name ?? '',
+                rows: new Array(...this.selectedItems.values()).map((v) => {
+                    const exportrow = Object.assign({}, v);
+                    if (this.useDefaultValueFormat) {
+                        this.visibleHeaders.forEach((h) => {
+                            exportrow[h.value] = this.getCellValue(exportrow, h);
+                        });
+                    }
+                    return exportrow;
+                }),
+                headers: this.visibleHeaders
+                    .map((h) => ({
+                        format: h.format,
+                        text: h.text,
+                        value: h.value,
+                        width: Math.round(h.width),
+                    }) as IHeaderType),
+            } as IExportDataParameters);
+        }
     }
+
 
     public widthNumber(w: any): number {
         if (typeof w === 'number') {
@@ -236,11 +287,33 @@ export default class GDataGridClass extends Vue {
 
     public defaultGlobalFormat(v: any) {
         if (v instanceof Date) {
-            return v.toString().replace('T00:00:00', '');
+            return v.toLocaleString().replace('T00:00:00', '').replace('T', ' ').replace('Z', '');
         } else if (typeof v === 'string' && v.endsWith('T00:00:00')) {
             return v.substr(0, v.length - 9);
         }
         return v;
+    }
+
+    public formatUsingHeaderFormat(v: any, format: string) {
+        // TODO
+        return v;
+    }
+
+    public getCellValue(row: any, header: IHeaderModel) {
+        const cv = this.globalFormat(header.format ?
+            this.formatUsingHeaderFormat(row[header.value], header.format) :
+            row[header.value]);
+        if (cv === undefined) {
+            return this.undefinedText;
+        } else if (typeof cv === 'boolean') {
+            return cv ? '✅' : '❌';
+        } else if (typeof cv === 'string' && (cv === 'Y' || cv === 'N') &&
+            ((header.value).startsWith('is')
+                || header.value.endsWith('Flag')
+                || header.value.endsWith('Status'))) {
+            return cv === 'Y' ? '✅' : '❌';
+        }
+        return cv;
     }
 
     public qsLeft(cellVal: any) {
@@ -267,7 +340,7 @@ export default class GDataGridClass extends Vue {
         return '';
     }
 
-    public getCellValue(row: any, header: any) {
+    public getCellValue_Old(row: any, header: any) {
         const cv = this.globalFormat(header.format ? header.format(row[header.value], row) : row[header.value]);
         if (cv === undefined) {
             return this.undefinedText;
@@ -533,14 +606,14 @@ export default class GDataGridClass extends Vue {
         // Init visible collections
         this.visibleItems = [];
         const beginOffset = Math.max(0, this.top - this.itemsBefore);
-        this.beginIdx = this.rowOffsets.findIndex(offset => offset >= beginOffset);
+        this.beginIdx = this.rowOffsets.findIndex((offset) => offset >= beginOffset);
         if (this.beginIdx < 0) {
             this.beginIdx = 0;
         }
 
         // Items
         const endOffset = Math.min(this.containerHeight, this.top + this.$el.clientHeight + this.itemsAfter);
-        let endIdx = this.rowOffsets.findIndex(offset => offset >= endOffset);
+        let endIdx = this.rowOffsets.findIndex((offset) => offset >= endOffset);
         if (endIdx < 0) {
             endIdx = this.filteredItems.length - 1;
         }
@@ -676,7 +749,8 @@ export default class GDataGridClass extends Vue {
     }
 
     @Watch('items', { deep: true })
-    public syncFilteredItems() {
+    public async syncFilteredItems() {
+        await this.tryCorrectHeadersIfEmpty();
         clearTimeout(this.syncTimeoutId);
         const allKeys = this.headersInternal.map((h) => h.value);
         const filterKeys = Object.keys(this.filters).filter((k) => this.filters[k]);
@@ -701,12 +775,6 @@ export default class GDataGridClass extends Vue {
             this.filteredItems = this.sortItems(this.items.map((i) => i));
         }
         this.recalcOffsets();
-    }
-    private async recalcOffsets() {
-        let cursor = 0;
-        const c = this.calcRowHeight ?? this.calcRowHeightDefault;
-        this.rowOffsets = this.filteredItems.map((row: any) => (cursor += c(row, this.rowExpanded[row[this.trackId]])));
-        await this.updateVisibleItems(false);
     }
 
     public initDefaultHeaders() {
@@ -893,7 +961,26 @@ export default class GDataGridClass extends Vue {
         }
     }
 
+    public keyToHeaderText(key: string) {
+        return key.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase()).replace('I D', 'ID');
+    }
     /** Private functions */
+
+    private async tryCorrectHeadersIfEmpty() {
+        if (this.headers.length === 0 && this.items.length > 0) {
+            this.headers.push(...
+                Object.keys(this.items[0])
+                    .filter((k) => !this.systemColumns.includes(k))
+                    .map((k) => ({
+                        value: k,
+                        text: this.keyToHeaderText(k),
+                        width: 80,
+                    })));
+        }
+        if (!this.layouts || !this.layouts.length) {
+            await this.createNewLayout('Default');
+        }
+    }
 
     private calcRowHeightDefault(row: any, expand: boolean) {
         if (expand) {
@@ -1102,8 +1189,18 @@ export default class GDataGridClass extends Vue {
         if (layout) {
             let parsedLayout = JSON.parse(layout?.gridLayoutJson ?? '{}') as (ILayout | any[]);
             if (Array.isArray(parsedLayout)) {
-                parsedLayout = Object.assign(this.layoutObject,
-                    { headers: parsedLayout, filters: {}, sortColumns: [], quickSearch: '', filterConditions: {} });
+                parsedLayout = Object.assign(this.layoutObject, {
+                    headers: parsedLayout
+                        .filter((p) => !this.systemColumns.includes(p.value))
+                        .map((p) => Object.assign(p,
+                            { text: p.text || this.keyToHeaderText(p.value) })),
+                    filters: {},
+                    sortColumns: [],
+                    quickSearch: '',
+                    filterConditions: {},
+                });
+            } else {
+                parsedLayout.headers = parsedLayout.headers.filter((h) => !this.systemColumns.includes(h.value));
             }
             this.layoutObject = parsedLayout;
         }
@@ -1128,10 +1225,10 @@ export default class GDataGridClass extends Vue {
     }
 
     private async loadLayouts() {
-        this.layouts = await this.layoutApi.getLayouts(this.tableId);
-        if (!this.layouts || !this.layouts.length) {
-            this.initDefaultHeaders();
-            await this.createNewLayout('Default');
+        try {
+            this.layouts = await this.layoutApi.getLayouts(this.tableId);
+        } catch {
+            this.tryCorrectHeadersIfEmpty();
         }
     }
 
@@ -1160,6 +1257,32 @@ export default class GDataGridClass extends Vue {
                 this.updateVisibleItems();
             }
         });
+        this.$on('export', async (payload: IExportDataParameters) => {
+            const urlRequest = `${process.env.VUE_APP_BACKEND_URL}/api/GridLayout/ExportExcelData`;
+            const fileName = 'export.xlsx';
+            const response = await fetch(urlRequest,
+                {
+                    method: 'POST', body: JSON.stringify(payload),
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    },
+                },
+            );
+            if (response.ok) {
+                const data = await response.blob();
+                // const { data, fileName } = (await clientFactory.createGridLayoutApi().exportExcelData(payload));
+                const url = window.URL.createObjectURL(data);
+                const link = document.createElement('a');
+                link.href = url;
+                link.setAttribute('download', fileName ?? 'export.xlsx');
+                document.body.appendChild(link);
+                link.click();
+                this.tableMenu = false;
+            } else {
+                alert('export failed');
+            }
+        });
 
         await this.initialize();
     }
@@ -1167,7 +1290,7 @@ export default class GDataGridClass extends Vue {
         if (e.code === 'KeyA' && e.ctrlKey) {
             this.selectAll();
             e.preventDefault();
-        } else if (e.code == 'KeyF' && e.ctrlKey) {
+        } else if (e.code === 'KeyF' && e.ctrlKey) {
             if (document.activeElement !== this.$refs.qsinput) {
                 const inputEl = this.$refs.qsinput as HTMLInputElement;
                 if (inputEl) {
@@ -1183,6 +1306,9 @@ export default class GDataGridClass extends Vue {
         await this.loadLayouts();
         this.currentLayoutName = localStorage.getItem(this.storageId) ?? this.layouts[0].layoutName ?? 'Default';
         this.currentLayoutNameChanged();
+        await this.syncFilteredItems();
+        await this.updateVisibleItems(false);
+        await this.updateVisibleHeaders();
         this.loadingInternal = this.loading;
     }
 
@@ -1192,5 +1318,12 @@ export default class GDataGridClass extends Vue {
         this.$root.$off('gdatagrid.delete');
         this.$root.$off('gdatagrid.highlight');
         this.$root.$off('gdatagrid.invalidate');
+    }
+
+    private async recalcOffsets() {
+        let cursor = 0;
+        const c = this.calcRowHeight ?? this.calcRowHeightDefault;
+        this.rowOffsets = this.filteredItems.map((row: any) => (cursor += c(row, this.rowExpanded[row[this.trackId]])));
+        await this.updateVisibleItems(false);
     }
 }

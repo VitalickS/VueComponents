@@ -185,6 +185,7 @@
                       <v-card class="ma-1">
                         <v-card-text>
                           <slot name="export"></slot>
+                          <v-switch v-if="hasDefaultValueFormatOption" v-model="useDefaultValueFormat" label="Use Default Value Formatter"></v-switch>
                         </v-card-text>
                         <v-card-actions>
                           <v-spacer></v-spacer>

@@ -29,6 +29,19 @@ export interface IHeaderModel {
     hidden?: boolean;
     width: number;
 }
+
+export interface IExportDataParameters {
+    name?: string | undefined;
+    headers?: IHeaderType[] | undefined;
+    rows?: any[] | undefined;
+}
+export interface IHeaderType {
+    text?: string | undefined;
+    width?: number;
+    value?: string | undefined;
+    format?: string | undefined;
+}
+
 export type FilterConditions = (
     'Contains' | 'Equals' |
     'Starts With' | 'Ends With' |
