@@ -967,7 +967,7 @@ export default class GDataGridClass extends Vue {
     /** Private functions */
 
     private async tryCorrectHeadersIfEmpty() {
-        if (this.headers.length === 0 && this.items.length > 0) {
+        if (this.headers.length === 0 && this.headersInternal.length === 0 && this.items.length > 0) {
             this.headers.push(...
                 Object.keys(this.items[0])
                     .filter((k) => !this.systemColumns.includes(k))
@@ -1227,7 +1227,7 @@ export default class GDataGridClass extends Vue {
     private async loadLayouts() {
         try {
             this.layouts = await this.layoutApi.getLayouts(this.tableId);
-        } catch {
+        } finally {
             this.tryCorrectHeadersIfEmpty();
         }
     }
@@ -1287,7 +1287,7 @@ export default class GDataGridClass extends Vue {
         await this.initialize();
     }
     private keydown(e: KeyboardEvent) {
-        if (e.code === 'KeyA' && e.ctrlKey) {
+        if (e.code === 'KeyA' && e.ctrlKey && document.activeElement?.tagName !== 'INPUT') {
             this.selectAll();
             e.preventDefault();
         } else if (e.code === 'KeyF' && e.ctrlKey) {
